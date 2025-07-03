@@ -1,0 +1,45 @@
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info/
+dist/
+build/
+.env
+.venv/
+env/
+venv/
+pip-log.txt
+
+# === IDEs ===
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+
+# === System Files ===
+.DS_Store
+Thumbs.db
+
+# === Node/React (if frontend is present) ===
+node_modules/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.env.local
+.env.production
+.env.development
+build/
+dist/
+
+# === Virtual environments ===
+*.swp
+.venv/
+
+# === Output files ===
+output/*
+!output/.gitkeep
+
+json_dump/*
+!json_dump/.gitkeep
