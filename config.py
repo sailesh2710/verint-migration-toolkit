@@ -1,3 +1,10 @@
+"""
+Configuration loader for Verint Migration Toolkit.
+
+Loads sensitive credentials and base URL from a .env file to be used
+for API authentication and data extraction.
+"""
+
 from dotenv import load_dotenv
 import os
 

@@ -1,3 +1,12 @@
+"""
+Module: access_rights_extractor.py
+Purpose:
+    Extracts access rights data for each employee from the Verint API,
+    including assigned roles, admin flags, default status, owning organization,
+    and lists of accessible organizations and groups.
+    Outputs the data into an Excel sheet named 'Access Rights'.
+"""
+
 import os
 import json
 import pandas as pd
@@ -7,17 +16,18 @@ from verint_client import VerintClient
 def extract_access_rights():
     client = VerintClient()
 
-    # Fetch all employees
+    # Fetch all employees from Verint
     emp_response = client.verint_call("wfo/user-mgmt-api/v1/employees")
     employees = emp_response.get("data", [])
 
-    records = []
+    records = []  # Will store formatted access rights data for all employees
     
     for emp in employees:
         emp_id = emp.get("id")
         emp_name = emp.get("attributes", {}).get("user", {}).get("username", "")
 
         try:
+            # Fetch all roles assigned to this employee
             response = client.verint_call(f"wfo/user-mgmt-api/v1/employees/{emp_id}/roles")
             roles = response.get("data", [])
 
@@ -25,10 +35,11 @@ def extract_access_rights():
                 attr = role.get("attributes", {})
                 rel = role.get("relationships", {})
 
+                # Get organization that owns the role
                 org_creator = rel.get("organization", {}).get("data", {})
                 org_creator_name = org_creator.get("meta", {}).get("name", "")
 
-                # Accessible orgs
+                # Gather accessible organizations under this role
                 accessible_orgs = [
                     {
                         "id": o.get("id"),
@@ -37,7 +48,7 @@ def extract_access_rights():
                     for o in rel.get("organizations", {}).get("data", [])
                 ]
 
-                # Accessible groups
+                # Gather accessible groups under this role
                 accessible_groups = [
                     {
                         "id": g.get("id"),
@@ -46,6 +57,7 @@ def extract_access_rights():
                     for g in rel.get("groups", {}).get("data", [])
                 ]
 
+                # Append consolidated access info for this role
                 records.append({
                     "Employee ID": emp_id,
                     "Username": emp_name,
@@ -61,7 +73,7 @@ def extract_access_rights():
         except Exception as e:
             print(f"Access rights not found for Employee ID {emp_id} — skipping. Error: {e}")
 
-    # Write to shared Excel workbook
+    # Write results into an Excel workbook under "Access Rights" sheet
     from openpyxl import Workbook, load_workbook
     from openpyxl.utils.dataframe import dataframe_to_rows
 
@@ -75,7 +87,11 @@ def extract_access_rights():
         wb = Workbook()
         wb.remove(wb.active)
 
+    if "Access Rights" in wb.sheetnames:
+        std = wb["Access Rights"]
+        wb.remove(std)
     ws = wb.create_sheet(title="Access Rights")
+
     for r in dataframe_to_rows(df, index=False, header=True):
         ws.append(r)
 

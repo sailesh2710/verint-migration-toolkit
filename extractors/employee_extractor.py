@@ -1,3 +1,11 @@
+"""
+Module: employee_extractor.py
+Purpose:
+    Extracts detailed employee records from Verint using authenticated API calls,
+    including job title, supervisor, team lead, skills, UDFs, preferences, and workspace info.
+    Exports this information into the 'Employees' sheet of a shared Excel workbook.
+"""
+
 import os
 import json
 import pandas as pd
@@ -7,13 +15,13 @@ from extractors.group_extractor import extract_groups
 
 def parse_employee_skills(skill_json):
     """
-    Return a list of *active* skills.
+    Return a list of active skills for an employee.
 
-    A skill is considered active when **end_date** / **endDate** is
-    • missing, "", None, or "null", **OR**
-    • on or after today's UTC date (compare just the YYYY‑MM‑DD part).
+    A skill is considered active if its end_date is either:
+    - missing, empty, None, or "null"
+    - OR on or after today's UTC date
 
-    The function tolerates both camelCase and snake_case keys.
+    The function is tolerant of both snake_case and camelCase keys.
     """
     today = datetime.utcnow().date()
 
@@ -21,6 +29,7 @@ def parse_employee_skills(skill_json):
     active_skills: list[dict] = []
     dropped = 0
 
+    # Iterate over all skill assignments to filter active ones
     for item in skill_assignments:
         attr = item.get("attributes", {}) or {}
         skill_meta = (
@@ -34,7 +43,7 @@ def parse_employee_skills(skill_json):
         end_raw = attr.get("end_date") or attr.get("endDate") or ""
         start_raw = attr.get("start_date") or attr.get("startDate") or ""
 
-        # Decide if we keep this assignment
+        # Decide if we keep this assignment based on end date
         keep = False
         if not end_raw or str(end_raw).lower() == "null":
             keep = True
@@ -43,7 +52,6 @@ def parse_employee_skills(skill_json):
                 end_dt = datetime.strptime(end_raw[:10], "%Y-%m-%d").date()
                 keep = end_dt >= today
             except Exception:
-                # If parsing fails, assume it's still relevant
                 keep = True
 
         if keep:
@@ -62,7 +70,7 @@ def parse_employee_skills(skill_json):
         else:
             dropped += 1
 
-    # Debug summary
+    # Debug summary of skills kept vs dropped
     if skill_assignments:
         print(f"    kept {len(active_skills)} / {len(skill_assignments)} skills "
               f"(dropped {dropped})")
@@ -70,8 +78,13 @@ def parse_employee_skills(skill_json):
     return active_skills if active_skills else ""
 
 def parse_employee_udfs(udf_json):
+    """
+    Extracts and returns user-defined fields (UDFs) for an employee as a list of name-value pairs.
+    """
     udf_entries = udf_json.get("data", [])
     parsed_udfs = []
+
+    # Parse each UDF entry into a simple dict
     for item in udf_entries:
         attr = item.get("attributes", {})
         parsed_udfs.append({
@@ -81,20 +94,25 @@ def parse_employee_udfs(udf_json):
     return parsed_udfs if parsed_udfs else ""
 
 def extract_employees(employee_groups_map):
+    """
+    Connects to Verint API and exports enriched employee metadata to an Excel sheet.
+    Accepts a prebuilt employee_groups_map to include group info for each employee.
+    """
     client = VerintClient()
+
+    # Fetch base employee list and save raw data for audit
     response = client.verint_call("wfo/user-mgmt-api/v1/employees")
-
     employees = response.get("data", [])
-    records = []
-    employee_types = set()
-
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     os.makedirs("json_dump", exist_ok=True)
     with open(f"json_dump/employee_response_{timestamp}.json", "w") as f:
         json.dump(response, f, indent=4)
 
+    records = []
     data_source_cache = {}
+    employee_types = set()
 
+    # Process each employee record individually
     for emp in employees:
         attr = emp.get("attributes", {}) or {}
         person = attr.get("person") or {}
@@ -110,6 +128,7 @@ def extract_employees(employee_groups_map):
         employee_id = emp.get("id")
         organization_id = attr.get("organizationId")
 
+        # Job title details for employee
         try:
             job_res = client.verint_call(f"wfo/user-mgmt-api/v1/employees/{employee_id}/jobTitle")
             job_data = job_res.get("data", {})
@@ -120,6 +139,7 @@ def extract_employees(employee_groups_map):
             print(f"Job title fetch failed for Employee ID {employee_id} — skipping. Error: {e}")
             job_title_json = None
 
+        # Workspace logins per data source: aggregate login names with data source names
         workspace_logins = []
         try:
             workspace_res = client.verint_call(f"wfo/user-mgmt-api/v1/employees/{employee_id}/workspace")
@@ -135,7 +155,7 @@ def extract_employees(employee_groups_map):
         except Exception as e:
             print(f"Workspace fetch failed for Employee ID {employee_id} — skipping. Error: {e}")
 
-        # Updated preference handling
+        # User preferences (filtered to selected keys)
         pref_keys = ",".join([
             "UserTimezone", "UserLanguage", "UserDefaultPageRows",
             "UserRegionalFormat", "UserAccessibilityComplianceMode",
@@ -149,6 +169,7 @@ def extract_employees(employee_groups_map):
             prefs_res = client.verint_call(
                 f"wfo/user-mgmt-api/v1/employees/{employee_id}/preferences?keys={pref_keys}"
             )
+            # Parse preferences into name-value pairs, ignoring null values
             for pref in prefs_res.get("data", []):
                 key = pref.get("id")
                 value = pref.get("attributes", {}).get("value")
@@ -161,6 +182,7 @@ def extract_employees(employee_groups_map):
             print(f"Preferences not found for Employee ID {employee_id} — skipping. Error: {e}")
             parsed_preferences = []
 
+        # Skill assignments (active only)
         try:
             skills_res = client.verint_call(f"wfo/user-mgmt-api/v1/employees/{employee_id}/skills")
             employee_skills = parse_employee_skills(skills_res)
@@ -171,6 +193,7 @@ def extract_employees(employee_groups_map):
             print(f"Skill fetch failed for Employee ID {employee_id} — skipping. Error: {e}")
             employee_skills = ""
 
+        # User-defined fields (UDFs)
         try:
             udf_res = client.verint_call(f"wfo/user-mgmt-api/v1/employees/{employee_id}/user-defined-fields")
             employee_udfs = parse_employee_udfs(udf_res)
@@ -178,13 +201,13 @@ def extract_employees(employee_groups_map):
             print(f"UDF fetch failed for Employee ID {employee_id} — skipping. Error: {e}")
             employee_udfs = ""
 
-        # Build compact JSON for the employee's *active* skills
+        # Build compact JSON for the employee's active skills
         if employee_skills:
             skills_json = json.dumps(employee_skills, separators=(",", ":"))
         else:
             skills_json = None
 
-        # Supervisor and Team Lead as JSON objects with id and name, use None for empty
+        # Supervisor info: fetch and format as JSON object with id and full name
         supervisor_obj = None
         try:
             supervisor_res = client.verint_call(f"wfo/user-mgmt-api/v1/employees/{employee_id}/supervisor")
@@ -195,6 +218,7 @@ def extract_employees(employee_groups_map):
         except Exception as e:
             print(f"Supervisor fetch failed for Employee ID {employee_id} — skipping. Error: {e}")
 
+        # Team Lead info: fetch and format as JSON object with id and full name
         teamlead_obj = None
         try:
             teamlead_res = client.verint_call(f"wfo/user-mgmt-api/v1/employees/{employee_id}/teamLead")
@@ -205,6 +229,7 @@ def extract_employees(employee_groups_map):
         except Exception as e:
             print(f"Team lead fetch failed for Employee ID {employee_id} — skipping. Error: {e}")
 
+        # Assemble record with all collected employee metadata
         record = {
             "Employee ID": employee_id,
             "Username": user.get("username"),
@@ -246,9 +271,10 @@ def extract_employees(employee_groups_map):
 
         records.append(record)
 
+    # Convert list of employee records to DataFrame for export
     df = pd.DataFrame(records)
 
-    # Write to shared workbook "output/verint_full_export.xlsx"
+    # Write output to shared workbook
     from openpyxl import Workbook, load_workbook
     from openpyxl.utils.dataframe import dataframe_to_rows
     wb_path = "output/verint_full_export.xlsx"
@@ -260,10 +286,10 @@ def extract_employees(employee_groups_map):
         wb = Workbook()
         wb.remove(wb.active)
 
-    # Always overwrite the previous “Employees” sheet if it exists
     if "Employees" in wb.sheetnames:
         del wb["Employees"]
     ws = wb.create_sheet(title="Employees")
+
     for r in dataframe_to_rows(df, index=False, header=True):
         ws.append(r)
 

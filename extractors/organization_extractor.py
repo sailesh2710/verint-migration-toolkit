@@ -1,3 +1,10 @@
+"""
+Module: organization_extractor.py
+Purpose: Extracts hierarchical organization data from the Verint API,
+including directly assigned skills, user-defined fields (UDFs), and job titles,
+then exports it into a structured Excel sheet.
+"""
+
 import os
 import json
 import pandas as pd
@@ -6,18 +13,23 @@ from collections import defaultdict
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 from verint_client import VerintClient
+from openpyxl import load_workbook
 
 
 def extract_organizations():
+    """
+    Connects to Verint API to fetch and export organization hierarchy and metadata.
+    """
     client = VerintClient()
 
-    # Call organizations API
+    # Call organizations API and save response to disk for traceability
     org_response = client.verint_call("wfo/user-mgmt-api/v1/organizations")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     os.makedirs("json_dump", exist_ok=True)
     with open(f"json_dump/org_response_{timestamp}.json", "w") as f:
         json.dump(org_response, f, indent=4)
 
+    # Flatten org data and build lookup and children map
     orgs = org_response.get("data", [])
     org_by_id = {org["id"]: org for org in orgs}
     children_map = defaultdict(list)
@@ -29,13 +41,19 @@ def extract_organizations():
     rows_hierarchy = []
 
     def add_org_and_skills(org_id, level):
+        """
+        Recursively appends an organization and its children to the export rows,
+        including its skills, UDFs, and job titles.
+        """
         org = org_by_id[org_id]
         attr = org["attributes"]
 
+        # Initialize row with name placed at the correct level column
         row = [''] * 10
         org_id_str = str(org_id)
         row[level] = attr.get("name", "")
 
+        # Capture general metadata
         description = attr.get("description", "")
         timezone = attr.get("timeZone", "")
         week_start = attr.get("weekStartDay", "")
@@ -46,10 +64,9 @@ def extract_organizations():
         skill_response = client.verint_call(f"wfo/user-mgmt-api/v1/organizations/{org_id}/skills")
         skills = skill_response.get("data", [])
         direct_skills = []
-
         for skill in skills:
             org_ref_id = skill.get("relationships", {}).get("organization", {}).get("data", {}).get("id")
-            if str(org_ref_id) == str(org_id):
+            if str(org_ref_id) == str(org_id):  # Ensure it’s directly assigned
                 sattr = skill.get("attributes", {})
                 direct_skills.append({
                     "name": sattr.get("name", ""),
@@ -98,34 +115,37 @@ def extract_organizations():
                 json.dumps(direct_skills), json.dumps(udf_list), json.dumps(job_list)]
         rows_hierarchy.append(row[:10] + [org_id_str] + row[10:])
 
+        # Recurse into children
         for child_id in children_map.get(org_id, []):
             add_org_and_skills(child_id, level + 1)
 
+    # Start hierarchy traversal from root organizations
     for org in orgs:
         if org["attributes"].get("parentId") is None:
             add_org_and_skills(org["id"], 0)
 
-    # Create workbook and write Organization Hierarchy sheet directly
+    # Create or load Excel workbook
     wb_path = "output/verint_full_export.xlsx"
     os.makedirs("output", exist_ok=True)
 
     if os.path.exists(wb_path):
-        from openpyxl import load_workbook
         wb = load_workbook(wb_path)
     else:
         wb = Workbook()
         wb.remove(wb.active)
 
+    # Overwrite existing "Organization Hierarchy" sheet if present
     if "Organization Hierarchy" in wb.sheetnames:
         std = wb["Organization Hierarchy"]
         wb.remove(std)
-    ws = wb.create_sheet(title="Organization Hierarchy")   
+    ws = wb.create_sheet(title="Organization Hierarchy")
 
     headers = [f"Level {i+1}" for i in range(10)] + ["Organization ID"] + [
         "Description", "TimeZone", "WeekStartDay", "SeatsNumber", "Location",
         "Skills (Direct Only)", "User Defined Fields (Direct Only)", "Job Titles (Direct Only)"
     ]
     ws.append(headers)
+
     for col in ws.iter_cols(min_row=1, max_row=1, min_col=1, max_col=len(headers)):
         for cell in col:
             cell.fill = PatternFill(start_color="FBE4D5", end_color="FBE4D5", fill_type="solid")

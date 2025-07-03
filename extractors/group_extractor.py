@@ -1,3 +1,11 @@
+"""
+Module: group_extractor.py
+Purpose:
+    Extracts hierarchical group data from the Verint API, along with group
+    membership, and exports it into an Excel sheet. Also builds a lookup of employee-to-group
+    assignments for downstream processing.
+"""
+
 import pandas as pd
 from verint_client import VerintClient
 from datetime import datetime
@@ -6,14 +14,18 @@ import os
 from collections import defaultdict
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl import load_workbook
 
 employee_groups_map = defaultdict(list)
 
 def extract_groups():
+    """
+    Connects to Verint API to fetch and export group hierarchy and metadata.
+    """
     client = VerintClient()
     response = client.verint_call("wfo/user-mgmt-api/v1/groups")
 
-    # Save full group response with a timestamp
+    # Call groups API and save response to disk for traceability
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     os.makedirs("json_dump", exist_ok=True)
     with open(f"json_dump/group_response_{timestamp}.json", "w") as f:
@@ -21,9 +33,9 @@ def extract_groups():
 
     groups = response.get("data", [])
 
-    # Build lookup
-    group_by_id = {group["id"]: group for group in groups}
-    children_map = defaultdict(list)
+    # Build maps for quick lookup and hierarchy traversal
+    group_by_id = {group["id"]: group for group in groups}  
+    children_map = defaultdict(list)  
     for group in groups:
         parent_id = group["attributes"].get("parentId")
         if parent_id is not None:
@@ -32,15 +44,22 @@ def extract_groups():
     rows_detailed = []
 
     def get_group_members(group_id):
+        """
+        Retrieves the list of employees in a group and populates the global
+        employee_groups_map with group assignments.
+        """
         try:
+            # API for group members
             members_response = client.verint_call(f"wfo/user-mgmt-api/v1/groups/{group_id}/employees")
             members_data = members_response.get("data", [])
             group_name = group_by_id[group_id]["attributes"].get("name", "")
+
             for emp in members_data:
                 employee_groups_map[emp["id"]].append({
                     "id": group_id,
                     "name": group_name
                 })
+            # Member details for export
             return [
                 {
                     "id": emp.get("id", ""),
@@ -55,30 +74,37 @@ def extract_groups():
             return []
 
     def fill_levels_detailed(group_id, level, path):
+        """
+        Recursively traverses the group hierarchy and collects relevant metadata
+        and membership details for export.
+        """
         group = group_by_id[group_id]
         name = group["attributes"].get("name", "")
         description = group["attributes"].get("description", "") or ""
         group_type = ", ".join(group["attributes"].get("groupType", []))
+
+        # Get all members in this group
         members = get_group_members(group_id)
 
-        entry = [''] * 10  # levels
+        # Initialize row with name placed at the correct level column
+        entry = [''] * 10 
         group_id_str = str(group_id)
         entry[level] = name
         entry += [group_id_str, description, group_type, json.dumps(members)]
         rows_detailed.append(entry)
 
+        # Recursively process child groups, increasing the hierarchy level
         for child_id in children_map.get(group_id, []):
             fill_levels_detailed(child_id, level + 1, path + [name])
 
+    # Start recursion from root-level groups (those with no parent)
     for group in groups:
         if group["attributes"].get("parentId") is None:
             fill_levels_detailed(group["id"], 0, [])
 
-    # Create workbook and write Group Hierarchy sheet directly
+    # Prepare Excel workbook and write Group Hierarchy sheet directly
     wb_path = "output/verint_full_export.xlsx"
     os.makedirs("output", exist_ok=True)
-
-    from openpyxl import load_workbook
 
     if os.path.exists(wb_path):
         wb = load_workbook(wb_path)
@@ -86,12 +112,10 @@ def extract_groups():
         wb = Workbook()
         wb.remove(wb.active)
 
-    # Remove existing "Group Hierarchy" sheet if it exists
     if "Group Hierarchy" in wb.sheetnames:
         std = wb["Group Hierarchy"]
         wb.remove(std)
     ws = wb.create_sheet(title="Group Hierarchy")
-
 
     headers = [f"Level {i+1}" for i in range(10)] + ["Group ID", "Description", "Group Type", "Group Members"]
     ws.append(headers)

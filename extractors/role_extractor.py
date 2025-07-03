@@ -1,3 +1,10 @@
+"""
+Module: role_extractor.py
+Purpose:
+    Extracts role metadata from the Verint API and exports it into an Excel sheet.
+    Captures attributes such as role name, description, admin/default flags, and owning organization.
+"""
+
 import os
 import json
 import pandas as pd
@@ -7,10 +14,10 @@ from verint_client import VerintClient
 def extract_roles():
     client = VerintClient()
 
-    # Call roles API
+    # Call roles API endpoint to retrieve all roles
     response = client.verint_call("wfo/user-mgmt-api/v1/roles")
 
-    # Save full JSON response with timestamp
+    # Save full JSON response to disk with timestamp for traceability
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     os.makedirs("json_dump", exist_ok=True)
     with open(f"json_dump/roles_response_{timestamp}.json", "w") as f:
@@ -19,6 +26,7 @@ def extract_roles():
     roles = response.get("data", [])
     records = []
 
+    # Extract relevant metadata from each role entry
     for role in roles:
         attr = role.get("attributes", {})
         rel = role.get("relationships", {}).get("organization", {}).get("data", {})
@@ -32,10 +40,9 @@ def extract_roles():
             "Organization Name": meta.get("name")
         })
 
-    # Prepare DataFrame
     df = pd.DataFrame(records)
 
-    # Write to shared Excel file
+    # Load or create the Excel workbook
     from openpyxl import Workbook, load_workbook
     from openpyxl.utils.dataframe import dataframe_to_rows
 
@@ -48,7 +55,11 @@ def extract_roles():
         wb = Workbook()
         wb.remove(wb.active)
 
+    if "Roles" in wb.sheetnames:
+        std = wb["Roles"]
+        wb.remove(std)
     ws = wb.create_sheet(title="Roles")
+    
     for r in dataframe_to_rows(df, index=False, header=True):
         ws.append(r)
 
