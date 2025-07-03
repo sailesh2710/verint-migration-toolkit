@@ -9,7 +9,7 @@ The Verint Migration Toolkit is a Python-based application that extracts configu
 ```
 verint_migration_toolkit/
 │
-├── main.py                      # Entrypoint script to trigger all extractors
+├── main.py                     # Entrypoint script to trigger all extractors
 ├── config.py                   # Loads API credentials and base URL from .env
 ├── verint_client.py            # Wrapper for API authentication and requests
 ├── hmac_auth.py                # Custom Verint HMAC authentication logic
