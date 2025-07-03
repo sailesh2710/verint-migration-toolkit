@@ -49,7 +49,7 @@ VERINT_API_KEY_ID=your_api_key_id
 VERINT_API_KEY_SECRET=your_base64_encoded_secret
 ```
 
-> ⚠️ Make sure your secret is base64url-encoded.
+> Make sure your secret is base64url-encoded.
 
 ### 3. Execute the Script
 
