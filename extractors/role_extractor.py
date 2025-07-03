@@ -3,7 +3,6 @@ import json
 import pandas as pd
 from datetime import datetime
 from verint_client import VerintClient
-import logging
 
 def extract_roles():
     client = VerintClient()
